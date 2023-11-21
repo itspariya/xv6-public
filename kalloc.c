@@ -94,3 +94,20 @@ kalloc(void)
   return (char*)r;
 }
 
+
+// Determine number of free pages in the system
+
+int free_pages(){
+	int count=0;	// Declare counter variable
+	struct run *r;	// Declare structure variable
+	// Enter critical section and avoid using race-condition by using locks
+	acquire(&kmem.lock);
+	r = kmem.freelist;
+	while(r!=0){
+	     count = count + 1;
+	     r =r  -> next;
+	}
+	release(&kmem.lock);
+	// End of critical section
+	return count; // Return total number of free pages
+}

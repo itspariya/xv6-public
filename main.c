@@ -54,6 +54,7 @@ mpmain(void)
   cprintf("cpu%d: starting %d\n", cpuid(), cpuid());
   idtinit();       // load idt register
   xchg(&(mycpu()->started), 1); // tell startothers() we're up
+  cprintf("xv6 number of free pages: %d\n", free_pages());
   scheduler();     // start running processes
 }
 

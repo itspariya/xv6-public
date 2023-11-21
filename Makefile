@@ -181,9 +181,16 @@ UPROGS=\
 	_usertests\
 	_wc\
 	_zombie\
+	_uniq\
+	_head\
+	_kuniq\
+	_khead\
+	_test\
+	_ps\
+	_schedule\
 
-fs.img: mkfs README $(UPROGS)
-	./mkfs fs.img README $(UPROGS)
+fs.img: mkfs README $(UPROGS) uniqexample.txt headexample.txt example.txt
+	./mkfs fs.img README $(UPROGS)uniqexample.txt headexample.txt example.txt
 
 -include *.d
 

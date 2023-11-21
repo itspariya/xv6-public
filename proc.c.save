@@ -6,9 +6,6 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
-#include "syscall.h"
-
-int current_scheduling_policy;
 
 struct {
   struct spinlock lock;
@@ -22,57 +19,32 @@ extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
-
-char* procstate_to_str(enum procstate state) {
-    switch(state) {
-        case UNUSED:    return "UNUSED";
-        case EMBRYO:    return "EMBRYO";
-        case SLEEPING:  return "SLEEPING";
-        case RUNNABLE:  return "RUNNABLE";
-        case RUNNING:   return "RUNNING";
-        case ZOMBIE:    return "ZOMBIE";
-        default:        return "UNKNOWN";
-    }
-}
-
-
-
-////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
 int
 getprocinfo(int pid, struct proc_stat *p)
 {
     struct proc *pr;
-    int found = 0;
-    
     acquire(&ptable.lock);
 
     for(pr = ptable.proc; pr < &ptable.proc[NPROC]; pr++) {
-        if(pid == 0 || pr->pid == pid) {  
+        if(pid == 0 || pr->pid == pid) {  // 0 means all processes
             p->pid = pr->pid;
-            safestrcpy(p->state, procstate_to_str(pr->state), sizeof(p->state));
+            p->state = pr->state;
             p->start_time = pr->creation_time;
             p->total_time = pr->total_time;
-            safestrcpy(p->name, pr->name, sizeof(p->name));
-
-            found = 1;
+            safestrcpy(p->name, pr->name, sizeof(pr->name));
 
             if(pid != 0) {
-                break;  // break out of the loop if we've found the desired PID
+                release(&ptable.lock);
+                return 0;
             }
-            
-            p++;  // Move to the next struct ONLY if we're gathering all processes
+            p++;  // Move to the next struct if we're gathering all processes
         }
     }
 
     release(&ptable.lock);
-
-    if(pid != 0 && !found) {
-        return -1;
-    }
-    
     return 0;
 }
-
 //////////////////////////////////////////////////////////
 void
 pinit(void)
@@ -145,8 +117,6 @@ found:
 
   // Initialize the lastwaited pointer
   p->lastwaited = 0;
-  p->total_time = 0;
-  p->last_start_time = ticks;
 
   release(&ptable.lock);
 
@@ -254,14 +224,12 @@ fork(void)
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
+    np->creation_time = ticks;  // When new process is created, creation time is initalitized to current process
     return -1;
   }
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
-  
-  np->creation_time = ticks;  // Set the creation time to the current system time
-
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -323,13 +291,13 @@ exit(void)
         wakeup1(initproc);
     }
   }
+  cprintf("exit: Process %d is exiting.\n", curproc->pid);
 
   // Record the end time and total time of the process
   curproc->end_time = ticks;
   curproc->total_time = curproc->end_time - curproc->creation_time;
-   cprintf("exit: Process %d has creation_time %d end_time %d and total_time %d.\n", curproc->pid, curproc->creation_time, curproc->end_time, curproc->total_time);
 
-// Jump into the scheduler, never to return.
+  // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
   sched();
   panic("zombie exit");
@@ -408,11 +376,6 @@ void
 scheduler(void)
 {
   struct proc *p;
-  struct proc *selected_p; // the process to run
-  int lowest_start_tick = 2172895;  // for FCFS
-  int highest_priority = 2172895;    // for priority scheduling
-    
-  
   struct cpu *c = mycpu();
   c->proc = 0;
 
@@ -420,68 +383,27 @@ scheduler(void)
     // Enable interrupts on this processor.
     sti();
 
-
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-
-    selected_p = 0; // Reset selected process before searching
-    if (current_scheduling_policy == SCHEDULING_POLICY_FCFS)
-    {
-      lowest_start_tick = ~0;
-    }
-    else
-    {
-        highest_priority = 2147483647; // max value reprosenting lowest priority
-    }
-      
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
-      
-      if (current_scheduling_policy == SCHEDULING_POLICY_FCFS)
-      {
-        // FCFS policy: choose the process with the oldest start_tick.
-        if (p->creation_time < lowest_start_tick)
-        {
-            selected_p = p;
-            lowest_start_tick = p->creation_time;
-        }
-      }
-      else
-      {
-        // Priority scheduling policy: choose the process with the highest priority.
-        if (p->priority < highest_priority)
-        {
-          selected_p = p;
-          highest_priority = p->priority;
-        }
-      }
-    }
-    // If we found a process to run, execute it
-    if (selected_p)
-    {
-      // Calculate execution time for the currently running process
-      if(c->proc && c->proc->state == RUNNING) {
-        c->proc->total_time += ticks - c->proc->last_start_time;  // Update the execution time
-      }
-      
-      // Switch to chosen process. It is the process's job
+
+      // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      c->proc = selected_p;
-      switchuvm(selected_p);
-      selected_p->state = RUNNING;
-      selected_p->last_start_time = ticks;  // Record the current time.
-
-      swtch(&(c->scheduler), selected_p->context);
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      swtch(&(c->scheduler), p->context);
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
-
     release(&ptable.lock);
+
   }
 }
 

@@ -385,6 +385,40 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   return 0;
 }
 
+// Copy len bytes from user address va in page table pgdir to p.
+int
+copyin(pde_t *pgdir, uint va, void *p, uint len)
+{
+  char *buf, *pa0;
+  uint n, va0;
+
+  cprintf("Starting copyin for address %x, length %d\n", va, len);  // Debug message
+
+  buf = (char*)p;
+  while(len > 0){
+    va0 = (uint)PGROUNDDOWN(va);
+    pa0 = uva2ka(pgdir, (char*)va0);
+    if(pa0 == 0){
+      cprintf("Error: uva2ka returned null for address %x\n", va0);  // Debug message
+      return -1;
+    }
+    n = PGSIZE - (va - va0);
+    if(n > len)
+      n = len;
+    
+    cprintf("Copying %d bytes from address %x to buffer\n", n, va0);  // Debug message
+    memmove(buf, pa0 + (va - va0), n);
+
+    len -= n;
+    buf += n;
+    va = va0 + PGSIZE;
+  }
+
+  cprintf("Finished copyin for address %x\n", va);  // Debug message
+
+  return 0;
+}
+
 //PAGEBREAK!
 // Blank page.
 //PAGEBREAK!

@@ -1,5 +1,7 @@
+
 struct stat;
 struct rtcdate;
+
 
 // system calls
 int fork(void);
@@ -23,6 +25,10 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int uniq(char *string);
+int head(char*, int);
+int gettime(int *start_time, int *end_time, int *total_time);
+int ps(int, struct proc_stat*);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -37,3 +43,4 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
+
