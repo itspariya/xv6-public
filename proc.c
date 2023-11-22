@@ -8,7 +8,8 @@
 #include "spinlock.h"
 #include "syscall.h"
 
-int current_scheduling_policy;
+int current_scheduling_policy = SCHEDULING_POLICY_RR;
+
 
 struct {
   struct spinlock lock;
@@ -143,10 +144,15 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
 
+  p->sz = 0x3000;
+
+
   // Initialize the lastwaited pointer
   p->lastwaited = 0;
   p->total_time = 0;
-  p->last_start_time = ticks;
+  p->arrival_time = ticks;
+
+
 
   release(&ptable.lock);
 
@@ -188,7 +194,7 @@ userinit(void)
   if((p->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
   inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
-  p->sz = PGSIZE;
+  p->sz = 0x3000;
   memset(p->tf, 0, sizeof(*p->tf));
   p->tf->cs = (SEG_UCODE << 3) | DPL_USER;
   p->tf->ds = (SEG_UDATA << 3) | DPL_USER;
@@ -225,6 +231,9 @@ growproc(int n)
     if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
   } else if(n < 0){
+    // Ensure that the process size does not go below 0x3000
+    if((sz + n) < 0x3000)
+      return -1;
     if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
   }
@@ -404,86 +413,77 @@ wait(int *wtime, int *rtime)
 //  - eventually that proc
 // ess transfers control
 //      via swtch back to the scheduler.
-void
-scheduler(void)
+void scheduler(void)
 {
-  struct proc *p;
-  struct proc *selected_p; // the process to run
-  int lowest_start_tick = 2172895;  // for FCFS
-  int highest_priority = 2172895;    // for priority scheduling
-    
-  
-  struct cpu *c = mycpu();
-  c->proc = 0;
+    struct proc *p;
+    struct cpu *c = mycpu();
+    c->proc = 0;
 
-  for(;;){
-    // Enable interrupts on this processor.
-    sti();
+    for(;;){
+        // Enable interrupts on this processor.
+        sti();
 
+        // Loop over process table looking for process to run.
+        acquire(&ptable.lock);
 
-    // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
-
-    selected_p = 0; // Reset selected process before searching
-    if (current_scheduling_policy == SCHEDULING_POLICY_FCFS)
-    {
-      lowest_start_tick = ~0;
-    }
-    else
-    {
-        highest_priority = 2147483647; // max value reprosenting lowest priority
-    }
-      
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
-      
-      if (current_scheduling_policy == SCHEDULING_POLICY_FCFS)
-      {
-        // FCFS policy: choose the process with the oldest start_tick.
-        if (p->creation_time < lowest_start_tick)
-        {
-            selected_p = p;
-            lowest_start_tick = p->creation_time;
+        if (current_scheduling_policy == SCHEDULING_POLICY_FCFS) {
+            int earliest_time = 2172898;
+            struct proc *selected_p = NULL;
+            for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+                if(p->state != RUNNABLE)
+                    continue;
+                if(p->arrival_time < earliest_time) {
+                    earliest_time = p->arrival_time;
+                    selected_p = p;
+                }
+            }
+            if (selected_p) {
+                c->proc = selected_p;
+                switchuvm(selected_p);
+                selected_p->state = RUNNING;
+                selected_p->arrival_time = ticks;  // Record the current time.
+                swtch(&(c->scheduler), selected_p->context);
+                switchkvm();
+                c->proc = 0;
+            }
         }
-      }
-      else
-      {
-        // Priority scheduling policy: choose the process with the highest priority.
-        if (p->priority < highest_priority)
-        {
-          selected_p = p;
-          highest_priority = p->priority;
+        else if (current_scheduling_policy == SCHEDULING_POLICY_PRIORITY) {
+            int highest_priority = 0;
+            struct proc *selected_p = NULL;
+            for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+                if(p->state != RUNNABLE)
+                    continue;
+                if(p->priority > highest_priority) {
+                    highest_priority = p->priority;
+                    selected_p = p;
+                }
+            }
+            if (selected_p) {
+                c->proc = selected_p;
+                switchuvm(selected_p);
+                selected_p->state = RUNNING;
+                selected_p->arrival_time = ticks;  // Record the current time.
+                swtch(&(c->scheduler), selected_p->context);
+                switchkvm();
+                c->proc = 0;
+            }
         }
-      }
+        else {  // Default to Round Robin scheduling
+            for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+                if(p->state != RUNNABLE)
+                    continue;
+                c->proc = p;
+                switchuvm(p);
+                p->state = RUNNING;
+                swtch(&(c->scheduler), p->context);
+                switchkvm();
+                c->proc = 0;
+            }
+        }
+        release(&ptable.lock);
     }
-    // If we found a process to run, execute it
-    if (selected_p)
-    {
-      // Calculate execution time for the currently running process
-      if(c->proc && c->proc->state == RUNNING) {
-        c->proc->total_time += ticks - c->proc->last_start_time;  // Update the execution time
-      }
-      
-      // Switch to chosen process. It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = selected_p;
-      switchuvm(selected_p);
-      selected_p->state = RUNNING;
-      selected_p->last_start_time = ticks;  // Record the current time.
-
-      swtch(&(c->scheduler), selected_p->context);
-      switchkvm();
-
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
-    }
-
-    release(&ptable.lock);
-  }
 }
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
