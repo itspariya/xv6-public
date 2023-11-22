@@ -108,6 +108,7 @@ static struct kmap {
   uint phys_end;
   int perm;
 } kmap[] = {
+  { (void*)0x3000, 0x3000, PHYSTOP, PTE_W|PTE_U}, // Start user memory from 0x3000
  { (void*)KERNBASE, 0,             EXTMEM,    PTE_W}, // I/O space
  { (void*)KERNLINK, V2P(KERNLINK), V2P(data), 0},     // kern text+rodata
  { (void*)data,     V2P(data),     PHYSTOP,   PTE_W}, // kern data+memory
@@ -188,7 +189,7 @@ inituvm(pde_t *pgdir, char *init, uint sz)
     panic("inituvm: more than a page");
   mem = kalloc();
   memset(mem, 0, PGSIZE);
-  mappages(pgdir, 0, PGSIZE, V2P(mem), PTE_W|PTE_U);
+  mappages(pgdir, (void*)0x3000, PGSIZE, V2P(mem), PTE_W|PTE_U); // Start from 0x3000
   memmove(mem, init, sz);
 }
 
@@ -228,6 +229,11 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     return 0;
   if(newsz < oldsz)
     return oldsz;
+
+  if (oldsz < 0x3000) {
+    oldsz = 0x3000; // Start from 0x3000
+  }
+
 
   a = PGROUNDUP(oldsz);
   for(; a < newsz; a += PGSIZE){
@@ -322,7 +328,7 @@ copyuvm(pde_t *pgdir, uint sz)
 
   if((d = setupkvm()) == 0)
     return 0;
-  for(i = 0; i < sz; i += PGSIZE){
+  for(i = 0x3000; i < sz; i += PGSIZE) { // Start from 0x3000
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P))
